@@ -7,10 +7,9 @@ use crate::cli::RunArgs;
 
 impl RunArgs {
     pub fn run(&self) -> anyhow::Result<()> {
-        let (bin, args) = self
-            .command
-            .split_first()
-            .expect("run command is required by clap");
+        let bin = "/proc/self/exe";
+        let mut args = vec!["child"];
+        args.extend(self.command.iter().map(String::as_str));
 
         println!("Running: {:?}, with: {:?}", bin, args);
 
@@ -28,6 +27,26 @@ impl RunArgs {
         }
 
         let mut child = cmd.spawn()?;
+        let status = child.wait().expect("command wasn't running");
+
+        if !status.success() {
+            let exit_code = status.code().unwrap_or(-1);
+            anyhow::bail!("process exited with code: {}", exit_code);
+        }
+
+        Ok(())
+    }
+
+    pub fn child(&self) -> anyhow::Result<()> {
+        let (bin, args) = self
+            .command
+            .split_first()
+            .expect("run command is required by clap");
+
+        println!("Running: {:?}, with: {:?}", bin, args);
+
+        nix::unistd::sethostname("container")?;
+        let mut child = Command::new(bin).args(args).spawn()?;
         let status = child.wait().expect("command wasn't running");
 
         if !status.success() {

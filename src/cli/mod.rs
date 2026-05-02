@@ -16,6 +16,8 @@ pub enum Command {
     Pull(PullArgs),
     /// Create and run a new container from an image
     Run(RunArgs),
+    #[command(hide = true)]
+    Child(RunArgs),
 }
 
 #[derive(Debug, Args, Clone)]
