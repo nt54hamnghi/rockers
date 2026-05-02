@@ -3,7 +3,7 @@ use std::process::Command;
 
 use nix::sched::CloneFlags;
 
-use crate::cli::RunArgs;
+use crate::cli::{RunArgs, TARGET};
 
 impl RunArgs {
     pub fn run(&self) -> anyhow::Result<()> {
@@ -11,7 +11,7 @@ impl RunArgs {
         let mut args = vec!["child"];
         args.extend(self.command.iter().map(String::as_str));
 
-        println!("Running: {:?}, with: {:?}", bin, args);
+        println!("Running: {}, with: {:?}", bin, args,);
 
         let mut cmd = Command::new(bin);
         cmd.args(args);
@@ -21,7 +21,7 @@ impl RunArgs {
         // access environment variables with std::env, or acquire a mutex.
         unsafe {
             cmd.pre_exec(|| {
-                nix::sched::unshare(CloneFlags::CLONE_NEWUTS)?;
+                nix::sched::unshare(CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWPID)?;
                 Ok(())
             });
         }
@@ -43,10 +43,10 @@ impl RunArgs {
             .split_first()
             .expect("run command is required by clap");
 
-        println!("Running: {:?}, with: {:?}", bin, args);
+        println!("Running: {}, with: {:?}", bin, args,);
 
         nix::unistd::sethostname("container")?;
-        let mut child = Command::new(bin).args(args).spawn()?;
+        let mut child = Command::new(bin).args(args).chroot(TARGET).spawn()?;
         let status = child.wait().expect("command wasn't running");
 
         if !status.success() {

@@ -9,10 +9,8 @@ use tar::Archive;
 use tempfile::{self, TempDir};
 use tokio::task::JoinSet;
 
-use crate::cli::PullArgs;
+use crate::cli::{PullArgs, TARGET};
 use crate::registry::{ImageManifest, RegistryClient};
-
-const TARGET: &str = "./tmp/rootfs";
 
 impl PullArgs {
     pub async fn run(&self) -> anyhow::Result<()> {
