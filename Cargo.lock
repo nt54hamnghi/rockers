@@ -1137,6 +1137,7 @@ dependencies = [
  "indicatif",
  "reqwest",
  "serde",
+ "serde_json",
  "tar",
  "tempfile",
  "tokio",

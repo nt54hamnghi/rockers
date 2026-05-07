@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
@@ -10,21 +10,25 @@ use tempfile::{self, TempDir};
 use tokio::task::JoinSet;
 
 use crate::cli::PullArgs;
+use crate::image::ImageName;
 use crate::registry::{ImageManifest, RegistryClient};
 
-const TARGET: &str = "./tmp/rootfs-new3";
+const TARGET: &str = "./tmp/rootfs";
 
 impl PullArgs {
     pub async fn run(&self) -> anyhow::Result<()> {
-        let client = RegistryClient::new(&self.image).await?;
-        let desc = client.get_platform_manifest_descriptor().await?;
-        let ImageManifest { config, layers } = client.get_image_manifest(&desc).await?;
+        let image = self.image.parse::<ImageName>()?;
+        let client = RegistryClient::new(image).await?;
+        let ImageManifest { config, layers } = client.resolve_image_manifest().await?;
 
         let progress = MultiProgress::new();
         let style = ProgressStyle::with_template(
             "{msg:<2} [{bar:40.green/white}] {bytes:>8}/{total_bytes:8} ({bytes_per_sec}, {eta})",
         )?
         .progress_chars("=>-");
+
+        fs::create_dir_all("./tmp")?;
+        fs::create_dir_all(&TARGET)?;
 
         client
             .download_blob(&config, format!("./tmp/config.json"))
@@ -79,7 +83,7 @@ impl PullArgs {
             bar.set_style(style.clone());
             bar.set_message(format!("{digest_short}: Extracting"));
 
-            extract_tar_gz(bar.wrap_read(file), TARGET)?;
+            extract_tar_gz(bar.wrap_read(file), &TARGET)?;
 
             bar.finish_with_message(format!("{digest_short}: Pull complete"));
         }
@@ -91,6 +95,7 @@ impl PullArgs {
 pub fn extract_tar_gz(file: impl Read, target_path: impl AsRef<Path>) -> anyhow::Result<()> {
     let decoder = GzDecoder::new(file);
     let mut archive = Archive::new(decoder);
+    archive.set_overwrite(true);
     archive.unpack(target_path)?;
     Ok(())
 }
