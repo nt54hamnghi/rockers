@@ -8,5 +8,6 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Pull(p) => p.run().await,
         Command::Run(r) => r.run(),
+        Command::Child(r) => r.child(),
     }
 }
