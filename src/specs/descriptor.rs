@@ -2,10 +2,16 @@
 
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::Deserialize;
 
 use crate::specs::media_type::MediaType;
+
+static ALGORITHM_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z0-9]+(?:[.+_-][a-z0-9]+)*$").unwrap());
+static ENCODED_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9=_-]+$").unwrap());
 
 /// Descriptor describes the disposition of the targeted content.
 /// Its corresponding media type is `application/vnd.oci.descriptor.v1+json`.
@@ -66,6 +72,13 @@ impl TryFrom<String> for Digest {
     }
 }
 
+impl Display for Digest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let d = format!("{}:{}", self.algorithm, self.encoded);
+        write!(f, "{}", d)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub enum Algorithm {
     #[default]
@@ -85,11 +98,7 @@ impl Algorithm {
             Self::Sha256 => encoded.len() == 64 && is_hex_bytes(encoded),
             Self::Sha512 => encoded.len() == 128 && is_hex_bytes(encoded),
             Self::Blake3 => encoded.len() == 64 && is_hex_bytes(encoded),
-            Self::Unregistered(s) => {
-                // TODO: check with regex: ^[a-zA-Z0-9=_-]+$
-                let matched = false;
-                matched
-            }
+            Self::Unregistered(_) => ENCODED_RE.is_match(encoded),
         }
     }
 }
@@ -103,9 +112,7 @@ impl TryFrom<String> for Algorithm {
             "sha512" => Ok(Self::Sha512),
             "blake3" => Ok(Self::Blake3),
             _ => {
-                // TODO: check with regex: ^[a-z0-9]+(?:[.+_-][a-z0-9]+)*$
-                let matched = false;
-                if !matched {
+                if !ALGORITHM_RE.is_match(&value) {
                     return Err(DigestParseError::InvalidAlgorithmFormat(value));
                 }
                 Ok(Self::Unregistered(value))
@@ -145,9 +152,27 @@ mod tests {
     }
 
     #[rstest]
-    #[case::unknown("unknown")]
-    fn algorithm_try_from_rejects_invalid_algorithm_format(#[case] value: &str) {
-        // TODO
+    #[case::single_word("custom")]
+    #[case::with_dot("custom.v1")]
+    #[case::with_plus("custom+v1")]
+    #[case::with_underscore("custom_v1")]
+    #[case::with_dash("custom-v1")]
+    fn algorithm_try_from_accepts_unregistered_algorithm_names(#[case] value: &str) {
+        let algorithm = Algorithm::try_from(value.to_owned()).unwrap();
+
+        assert_eq!(algorithm.to_string(), value);
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::uppercase("Custom")]
+    #[case::leading_separator(".custom")]
+    #[case::trailing_separator("custom.")]
+    #[case::double_separator("custom..v1")]
+    fn algorithm_try_from_rejects_invalid_unregistered_algorithm_names(#[case] value: &str) {
+        let err = Algorithm::try_from(value.to_owned()).unwrap_err();
+
+        assert!(matches!(err, DigestParseError::InvalidAlgorithmFormat(_)));
     }
 
     #[rstest]
@@ -187,5 +212,31 @@ mod tests {
         let encoded = "g".repeat(len);
 
         assert!(!algorithm.validate_encoded(&encoded));
+    }
+
+    #[rstest]
+    #[case::letters("abcDEF")]
+    #[case::digits("123456")]
+    #[case::underscore("abc_DEF")]
+    #[case::dash("abc-DEF")]
+    #[case::equals("abc=DEF")]
+    fn unregistered_algorithm_validate_encoded_accepts_matching_encoded_re(#[case] encoded: &str) {
+        let algorithm = Algorithm::Unregistered("custom".to_owned());
+
+        assert!(algorithm.validate_encoded(encoded));
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::dot("abc.def")]
+    #[case::plus("abc+def")]
+    #[case::slash("abc/def")]
+    #[case::colon("abc:def")]
+    fn unregistered_algorithm_validate_encoded_rejects_non_matching_encoded_re(
+        #[case] encoded: &str,
+    ) {
+        let algorithm = Algorithm::Unregistered("custom".to_owned());
+
+        assert!(!algorithm.validate_encoded(encoded));
     }
 }

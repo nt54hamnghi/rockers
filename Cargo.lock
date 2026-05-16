@@ -1212,6 +1212,7 @@ dependencies = [
  "clap",
  "flate2",
  "indicatif",
+ "regex",
  "reqwest",
  "rstest",
  "serde",
