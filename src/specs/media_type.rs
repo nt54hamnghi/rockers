@@ -105,8 +105,9 @@ impl TryFrom<String> for MediaType {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rstest::rstest;
+
+    use super::*;
 
     #[rstest]
     #[case(OCI_DESCRIPTOR, MediaType::Descriptor)]
