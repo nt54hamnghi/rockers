@@ -1,7 +1,5 @@
 // https://github.com/opencontainers/image-spec/blob/main/media-types.md
 
-use std::fmt::{self, Display};
-
 use serde::Deserialize;
 
 pub const OCI_DESCRIPTOR: &str = "application/vnd.oci.descriptor.v1+json";
@@ -30,24 +28,8 @@ pub const DOCKER_IMAGE_ROOTFS_DIFF_TAR_GZIP: &str =
 /// Compatible with [`OCI_IMAGE_CONFIG`].
 pub const DOCKER_CONTAINER_IMAGE: &str = "application/vnd.docker.container.image.v1+json";
 
-const MEDIA_TYPES: &[&str] = &[
-    OCI_DESCRIPTOR,
-    OCI_LAYOUT_HEADER,
-    OCI_IMAGE_INDEX,
-    DOCKER_DISTRIBUTION_MANIFEST_LIST,
-    OCI_IMAGE_MANIFEST,
-    DOCKER_DISTRIBUTION_MANIFEST,
-    OCI_IMAGE_CONFIG,
-    DOCKER_CONTAINER_IMAGE,
-    OCI_IMAGE_LAYER_TAR,
-    OCI_IMAGE_LAYER_TAR_GZIP,
-    DOCKER_IMAGE_ROOTFS_DIFF_TAR_GZIP,
-    OCI_IMAGE_LAYER_TAR_ZSTD,
-    OCI_EMPTY,
-];
-
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(try_from = "String")]
+#[serde(from = "String")]
 pub enum MediaType {
     /// Content Descriptor.
     Descriptor,
@@ -67,38 +49,25 @@ pub enum MediaType {
     ImageLayerTarZstd,
     /// Empty for unused descriptors.
     Empty,
+    /// Unknown media type.
+    Unknown(String),
 }
 
-#[derive(Debug, thiserror::Error)]
-pub struct UnknownMediaType(String);
-
-impl Display for UnknownMediaType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "unknown variant `{}`, expected one of {:?}",
-            self.0, MEDIA_TYPES
-        )
-    }
-}
-
-impl TryFrom<String> for MediaType {
-    type Error = UnknownMediaType;
-
-    fn try_from(media_type: String) -> Result<Self, Self::Error> {
+impl From<String> for MediaType {
+    fn from(media_type: String) -> Self {
         match media_type.as_str() {
-            OCI_DESCRIPTOR => Ok(Self::Descriptor),
-            OCI_LAYOUT_HEADER => Ok(Self::LayoutHeader),
-            OCI_IMAGE_INDEX | DOCKER_DISTRIBUTION_MANIFEST_LIST => Ok(Self::ImageIndex),
-            OCI_IMAGE_MANIFEST | DOCKER_DISTRIBUTION_MANIFEST => Ok(Self::ImageManifest),
-            OCI_IMAGE_CONFIG | DOCKER_CONTAINER_IMAGE => Ok(Self::ImageConfig),
-            OCI_IMAGE_LAYER_TAR => Ok(Self::ImageLayerTar),
+            OCI_DESCRIPTOR => Self::Descriptor,
+            OCI_LAYOUT_HEADER => Self::LayoutHeader,
+            OCI_IMAGE_INDEX | DOCKER_DISTRIBUTION_MANIFEST_LIST => Self::ImageIndex,
+            OCI_IMAGE_MANIFEST | DOCKER_DISTRIBUTION_MANIFEST => Self::ImageManifest,
+            OCI_IMAGE_CONFIG | DOCKER_CONTAINER_IMAGE => Self::ImageConfig,
+            OCI_IMAGE_LAYER_TAR => Self::ImageLayerTar,
             OCI_IMAGE_LAYER_TAR_GZIP | DOCKER_IMAGE_ROOTFS_DIFF_TAR_GZIP => {
-                Ok(Self::ImageLayerTarGzip)
+                Self::ImageLayerTarGzip
             }
-            OCI_IMAGE_LAYER_TAR_ZSTD => Ok(Self::ImageLayerTarZstd),
-            OCI_EMPTY => Ok(Self::Empty),
-            _ => Err(UnknownMediaType(media_type)),
+            OCI_IMAGE_LAYER_TAR_ZSTD => Self::ImageLayerTarZstd,
+            OCI_EMPTY => Self::Empty,
+            _ => Self::Unknown(media_type),
         }
     }
 }
@@ -119,11 +88,8 @@ mod tests {
     #[case(OCI_IMAGE_LAYER_TAR_GZIP, MediaType::ImageLayerTarGzip)]
     #[case(OCI_IMAGE_LAYER_TAR_ZSTD, MediaType::ImageLayerTarZstd)]
     #[case(OCI_EMPTY, MediaType::Empty)]
-    fn try_from_accepts_oci_media_types(#[case] media_type: &str, #[case] expected: MediaType) {
-        assert_eq!(
-            MediaType::try_from(media_type.to_string()).unwrap(),
-            expected
-        );
+    fn from_accepts_oci_media_types(#[case] media_type: &str, #[case] expected: MediaType) {
+        assert_eq!(MediaType::from(media_type.to_string()), expected);
     }
 
     #[rstest]
@@ -131,26 +97,30 @@ mod tests {
     #[case(DOCKER_DISTRIBUTION_MANIFEST, MediaType::ImageManifest)]
     #[case(DOCKER_CONTAINER_IMAGE, MediaType::ImageConfig)]
     #[case(DOCKER_IMAGE_ROOTFS_DIFF_TAR_GZIP, MediaType::ImageLayerTarGzip)]
-    fn try_from_accepts_docker_compatible_media_types(
+    fn from_accepts_docker_compatible_media_types(
         #[case] media_type: &str,
         #[case] expected: MediaType,
     ) {
+        assert_eq!(MediaType::from(media_type.to_string()), expected);
+    }
+
+    #[test]
+    fn from_preserves_unknown_media_type() {
+        let media_type = "application/octet-stream";
+
         assert_eq!(
-            MediaType::try_from(media_type.to_string()).unwrap(),
-            expected
+            MediaType::from(media_type.to_string()),
+            MediaType::Unknown(media_type.to_string())
         );
     }
 
     #[test]
-    fn try_from_rejects_unknown_media_type() {
-        let err = MediaType::try_from("application/octet-stream".to_string()).unwrap_err();
+    fn deserialize_preserves_unknown_media_type() {
+        let media_type = "application/octet-stream";
 
         assert_eq!(
-            err.to_string(),
-            format!(
-                "unknown variant `application/octet-stream`, expected one of {:?}",
-                MEDIA_TYPES
-            )
+            serde_json::from_str::<MediaType>(&format!(r#""{media_type}""#)).unwrap(),
+            MediaType::Unknown(media_type.to_string())
         );
     }
 }
