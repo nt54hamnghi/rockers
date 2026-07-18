@@ -3,6 +3,8 @@ use clap::{Args, Parser, Subcommand};
 pub mod pull;
 pub mod run;
 
+const TARGET: &str = "./tmp/rootfs";
+
 #[derive(Debug, Parser)]
 #[command(name = "rockers", about = "Pull and run container images")]
 pub struct Cli {
@@ -16,6 +18,8 @@ pub enum Command {
     Pull(PullArgs),
     /// Create and run a new container from an image
     Run(RunArgs),
+    #[command(hide = true)]
+    Child(RunArgs),
 }
 
 #[derive(Debug, Args, Clone)]
