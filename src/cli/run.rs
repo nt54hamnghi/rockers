@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -12,10 +13,25 @@ use crate::cli::{RunArgs, TARGET};
 
 impl RunArgs {
     pub fn run(&self) -> anyhow::Result<()> {
+        let host_uid = nix::unistd::getuid().as_raw();
+        let host_gid = nix::unistd::getgid().as_raw();
+
+        // Unprivileged processes can create user namespaces. A child process created
+        // with the CLONE_NEWUSER flag starts out with a complete set of capabilities
+        // inthe new user namespace. If CLONE_NEWUSER is specified along with other
+        // CLONE_NEW* flags, the user namespace is guaranteed to be created first,
+        // giving the child privileges over the remaining namespaces created by the call.
         nix::sched::unshare(
-            CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS,
+            CloneFlags::CLONE_NEWUSER
+                | CloneFlags::CLONE_NEWUTS
+                | CloneFlags::CLONE_NEWPID
+                | CloneFlags::CLONE_NEWNS,
         )
-        .context("failed to create UTS, PID, and mount namespaces")?;
+        .context("failed to create user, UTS, PID, and mount namespaces")?;
+
+        map_current_user_to_root(host_uid, host_gid)
+            .context("failed to map current host user to root in the new user namespace")?;
+
         // Set the mount propagation for the root mount point "/" to private recursively.
         // After this call, future mounts or unmounts inside this mount namespace will
         // not propagate to outside, and external mount changes will not propagate in.
@@ -25,7 +41,7 @@ impl RunArgs {
             None::<&str>,
             "/",
             None::<&str>,
-            nix::mount::MsFlags::MS_PRIVATE | nix::mount::MsFlags::MS_REC,
+            MsFlags::MS_PRIVATE | MsFlags::MS_REC,
             None::<&str>,
         )
         .context("failed to make root mount private recursively")?;
@@ -46,8 +62,6 @@ impl RunArgs {
     }
 
     pub fn child(&self) -> anyhow::Result<()> {
-        // nix::unistd::chroot(TARGET)?;
-
         // 1. bind mount rootfs, pivot_root requires the new root to be a mount point
         nix::mount::mount(
             Some(TARGET),
@@ -75,13 +89,13 @@ impl RunArgs {
             .context("failed to pivot root with old root at .put_old")?;
         nix::unistd::chdir("/").context("failed to change directory to new root")?;
 
-        // 4. lazily unmount old root and remove /.put_old
-        nix::mount::umount2("/.put_old", MntFlags::MNT_DETACH)
-            .context("failed to lazily unmount old root at /.put_old")?;
-        nix::unistd::unlinkat(AT_FDCWD, "/.put_old", UnlinkatFlags::RemoveDir)
-            .context("failed to remove old root directory at /.put_old")?;
+        let res = with_proc_mount(|| {
+            // 4. lazily unmount old root and remove /.put_old
+            nix::mount::umount2("/.put_old", MntFlags::MNT_DETACH)
+                .context("failed to lazily unmount old root at /.put_old")?;
+            nix::unistd::unlinkat(AT_FDCWD, "/.put_old", UnlinkatFlags::RemoveDir)
+                .context("failed to remove old root directory at /.put_old")?;
 
-        with_proc_mount(|| {
             let (bin, args) = self
                 .command
                 .split_first()
@@ -94,10 +108,27 @@ impl RunArgs {
                 anyhow::bail!("process exited with code: {}", exit_code);
             }
             Ok(())
-        })?;
+        });
 
-        Ok(())
+        res
     }
+}
+
+/// Maps the invoking host user to UID/GID 0 (root) inside a new user
+/// namespace. The process is still `host_uid`/`host_gid` outside the
+/// namespace, just root-equivalent within it.
+///
+/// Must run after the user namespace is created, before anything needing
+/// root inside it (e.g. `mount`, `chroot`, etc.).
+fn map_current_user_to_root(host_uid: u32, host_gid: u32) -> anyhow::Result<()> {
+    // setgroups must be denied before gid_map can be written unprivileged.
+    fs::write("/proc/self/setgroups", "deny\n")?;
+
+    // <inside-id> <outside-id> <range-length>
+    fs::write("/proc/self/uid_map", format!("0 {host_uid} 1\n"))?;
+    fs::write("/proc/self/gid_map", format!("0 {host_gid} 1\n"))?;
+
+    Ok(())
 }
 
 pub fn with_proc_mount(f: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
