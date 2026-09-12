@@ -16,6 +16,10 @@ tokio = { version = "1.51.0", features = ["full"] }
 serde_json = "1.0"
 thiserror = "2.0.18"
 regex = "1.12.3"
+nix = { version = "0.31.3", features = ["sched", "fs", "mount", "process", "signal"] }
+libc = "0.2.186"
+
+
 
 [[bin]]
 name = "main"
